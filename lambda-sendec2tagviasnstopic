@@ -1,0 +1,83 @@
+#V1.0
+#This code will get EC2 instanceid information from cloudwatch events when scheduled change event happen. 
+#Then it will call ec2 describe_tags API to get tag informations and publish to SNS topic with those information.
+#Author rockwang415@outlook.com
+
+import boto3
+import json
+
+def lambda_handler(event, context):
+    try:
+        
+    # Extract Instance ID from event
+        instance_id = event['resources'][0]
+        account = event['account']
+        timestamp = event['detail']['startTime']
+        region = event['region']
+
+    # Obtain information about the instance
+        ec2_client = boto3.client('ec2')
+        instance_info = ec2_client.describe_instances(InstanceIds=[instance_id])
+        instance = instance_info['Reservations'][0]['Instances'][0]
+
+    # Obtain tag information about the instance
+        response = ec2_client.describe_tags(
+                Filters=[
+                {
+                'Name': 'resource-id',
+                'Values': [instance_id,]
+                },
+                ]
+                )
+    # Define tag variable
+        instance_name = ""
+        instance_project = ""
+        instance_tier = ""
+        instance_environment = ""
+        instance_colorstack = ""
+        instance_partner = ""
+    
+    # Assign value to tag variable 
+        for tag in response["Tags"]:
+            if tag['Key'] == 'Name':
+                instance_name = tag['Value']
+            elif tag['Key'] == 'Project':
+                instance_project = tag['Value']
+            elif tag['Key'] == 'Tier':
+                instance_tier = tag['Value']
+            elif tag['Key'] == 'environment':
+                instance_environment = tag['Value']
+            elif tag['Key'] == 'colorstack':
+                instance_colorstack = tag['Value']
+            elif tag['Key'] == 'Partner':
+                instance_partner = tag['Value']
+            
+    # List all topic and get <target> topic, then send message to SNS with the tag information
+        MY_SNS_TOPIC_ARN = ""
+        TargetTopic = '<target>'
+        sns_client = boto3.client('sns')
+        response = sns_client.list_topics()
+        for item in response['Topics']:
+            if TargetTopic in item['TopicArn']:
+                MY_SNS_TOPIC_ARN = item['TopicArn']
+        sns_client.publish(
+            TopicArn = MY_SNS_TOPIC_ARN,
+            Subject = 'AWS EC2 Maintenance: Instance scheduled for retirement instanceid: ' + instance_id,
+            Message = 'One or more of your Amazon EC2 instances associated with your AWS account ' + account + ' are scheduled for' + '\n' +
+                    'maintenance that requires your instances to be retired on ' + timestamp + '.' + ' The following instances in the ' + region + '\n' + 
+                    'will be stopped after ' + timestamp + '.' + ' The tags associated with these instances are included below.' + '\n' + 
+                    'The affected instances are listed below: ' + '\n' + 
+                    'InstanceID: ' + instance_id  + '\n' + 
+                    'Account: ' + account + '\n' + 
+                    'RetiredTime: ' + timestamp + '\n' + 
+                    'Name: ' + instance_name + '\n' + 
+                    'Project: ' + instance_project + '\n' + 
+                    'Tier: ' + instance_tier + '\n' + 
+                    'environment: ' + instance_environment + '\n' + 
+                    'Colorstack: ' + instance_colorstack + '\n' + 
+                    'Partner: '  + instance_partner + '\n'
+     )
+    except Exception as e:
+         print(e)
+
+    
